@@ -292,7 +292,7 @@ class DropPath(nn.Module):
         return output
 
 
-# 窗口分割和合并函数
+# Window splitting and merging functions
 def window_partition(x, window_size: int):
     """
     Args:
@@ -435,10 +435,8 @@ class Rearrange(nn.Module):
         return rearrange(x, self.pattern, **self.axes_lengths)
 
 
-# 如果没有安装 einops，需要添加这个函数
+# If einops is not installed, this function needs to be added.
 def rearrange(tensor, pattern, **axes_lengths):
-    # 简化版的 einops.rearrange
-    # 实际应用中建议安装 einops
     return tensor.permute(0, 2, 3, 1).reshape(*tensor.shape[:2], -1)
 
 
@@ -476,8 +474,8 @@ class Global_block(nn.Module):
         self.drop_path = DropPath(drop_path) if drop_path > 0. else nn.Identity()
         self.norm2 = norm_layer(dim)
 
-        # 修改MLP为标准结构
-        mlp_hidden_dim = int(dim * mlp_ratio)  # 使用标准扩展比例4倍
+        # Modify the MLP to a standard structure
+        mlp_hidden_dim = int(dim * mlp_ratio)  # Use the standard expansion ratio of 4 times
         self.mlp = nn.Sequential(
             nn.Linear(dim, mlp_hidden_dim),
             act_layer(),
@@ -499,41 +497,41 @@ class Global_block(nn.Module):
         x = self.norm1(x)
         x = x.view(B, H, W, C)
 
-        # 填充特征图，使其尺寸是窗口大小的整数倍
+        # Pad the feature map so that its size is an integer multiple of the window size.
         pad_l = pad_t = 0
         pad_r = (self.window_size - W % self.window_size) % self.window_size
         pad_b = (self.window_size - H % self.window_size) % self.window_size
         x = F.pad(x, (0, 0, pad_l, pad_r, pad_t, pad_b))
         _, Hp, Wp, _ = x.shape
         # print("x1: ", x.shape)
-        # 循环移位
+        # Circular shift
         if self.shift_size > 0:
             shifted_x = torch.roll(x, shifts=(-self.shift_size, -self.shift_size), dims=(1, 2))
         else:
             shifted_x = x
             attn_mask = None
 
-        # 分割窗口
+        # Split window
         # print("shifted_x: ", shifted_x.shape)
         x_windows = window_partition(shifted_x, self.window_size)  # [nW*B, Mh, Mw, C]
         # print("x_windows: ", x_windows.shape)
         x_windows = x_windows.view(-1, self.window_size * self.window_size, C)  # [nW*B, Mh*Mw, C]
 
-        # 计算注意力
+        # Calculate attention
         # print(x_windows.shape)
         attn_windows = self.attn(x_windows, mask=attn_mask)  # [nW*B, Mh*Mw, C]
 
-        # 合并窗口
+        # Merge window
         attn_windows = attn_windows.view(-1, self.window_size, self.window_size, C)  # [nW*B, Mh, Mw, C]
         shifted_x = window_reverse(attn_windows, self.window_size, Hp, Wp)  # [B, H', W', C]
 
-        # 反向循环移位
+        # Reverse circular shift
         if self.shift_size > 0:
             x = torch.roll(shifted_x, shifts=(self.shift_size, self.shift_size), dims=(1, 2))
         else:
             x = shifted_x
 
-        # 移除填充
+        # Remove padding
         if pad_r > 0 or pad_b > 0:
             x = x[:, :H, :W, :].contiguous()
 
@@ -541,7 +539,7 @@ class Global_block(nn.Module):
         x = x.permute(0, 1, 3, 2).reshape(B, -1, C)
         # print(x.shape)
         x = x.view(B, C, H, W)
-        # 使用标准MLP结构
+        # Use the standard MLP structure
         # print(x.shape)
         # print(shortcut.shape)
         x = shortcut + self.drop_path(x)
@@ -574,10 +572,10 @@ class Local_block(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         shortcut = x
-        x = self.dwconv(x)  # 深度可分离卷积，处理空间特征
+        x = self.dwconv(x)  # Depthwise separable convolution, processing spatial features
         x = x.permute(0, 2, 3, 1)  # [N, C, H, W] -> [N, H, W, C]
         x = self.norm(x)
-        x = self.pwconv(x)  # 逐点卷积，使用线性层实现更高效
+        x = self.pwconv(x)  # Pointwise convolution, implemented with linear layers for greater efficiency
         x = self.act(x)
         x = x.permute(0, 3, 1, 2)  # [N, H, W, C] -> [N, C, H, W]
         x = shortcut + self.drop_path(x)
@@ -712,10 +710,10 @@ class EnhancedCrossAttentionHFF(nn.Module):
     def __init__(self, ch_1, ch_2, ch_int, ch_out, context_dim=None, num_heads=16, drop_rate=0., use_linear_attn=True):
         super().__init__()
 
-        # 添加对上下文特征维度的处理
-        self.context_dim = context_dim  # 上下文特征的通道数
+        # Add handling of context feature dimensions
+        self.context_dim = context_dim  # The number of channels of context features
 
-        # 特征对齐
+        # Feature alignment
         self.local_align = nn.Sequential(
             nn.Conv2d(ch_1, ch_int, 1),
             LayerNorm(ch_int, eps=1e-6, data_format="channels_first"),
@@ -730,21 +728,21 @@ class EnhancedCrossAttentionHFF(nn.Module):
             nn.Conv2d(ch_int, ch_int, 1)
         )
 
-        # 多头注意力参数
+        # Multi - head attention parameters
         self.num_heads = num_heads
         self.head_dim = ch_int // num_heads
         self.scale = self.head_dim ** -0.5
         self.use_linear_attn = use_linear_attn
 
-        # Q, K, V投影
+        # Q, K, V projections
         self.q_proj = nn.Linear(ch_int, ch_int)
         self.k_proj = nn.Linear(ch_int, ch_int)
         self.v_proj = nn.Linear(ch_int, ch_int)
 
-        # 输出投影
+        # Output the projection
         self.out_proj = nn.Linear(ch_int, ch_int)
 
-        # 保留原始的注意力机制
+        # Retain the original attention mechanism
         self.spatial_attn = nn.Sequential(
             nn.Conv2d(2, 1, 7, padding=3, bias=False),
             nn.Sigmoid()
@@ -758,7 +756,7 @@ class EnhancedCrossAttentionHFF(nn.Module):
             nn.Sigmoid()
         )
 
-        # 特征增强
+        # Feature enhancement
         self.feature_enhancer = nn.Sequential(
             # nn.Conv2d(ch_int, ch_int, kernel_size=3, padding=1, groups=ch_int),
             WTConv2d(ch_int, ch_int, kernel_size=3, stride=1, bias=False, wt_levels=1, wt_type='db1'),
@@ -768,7 +766,7 @@ class EnhancedCrossAttentionHFF(nn.Module):
             nn.BatchNorm2d(ch_int)
         )
 
-        # 上下文特征处理
+        # Context feature processing
         if context_dim is not None:
             self.context_transform = nn.Sequential(
                 nn.Conv2d(context_dim, ch_int, kernel_size=1),
@@ -778,16 +776,16 @@ class EnhancedCrossAttentionHFF(nn.Module):
         else:
             self.context_transform = None
 
-        # 动态融合
+        # Dynamic Fusion
         self.fusion_weights = nn.Parameter(torch.ones(3) / 3)
 
-        # 最终融合
+        # Final fusion
         self.final_fusion = IRMLP(ch_1 + ch_2 + ch_int, ch_out)
         self.norm = LayerNorm(ch_1 + ch_2 + ch_int, eps=1e-6, data_format="channels_first")
         self.drop_path = DropPath(drop_rate) if drop_rate > 0. else nn.Identity()
 
     def linear_attention(self, q, k, v):
-        """线性复杂度的注意力计算"""
+        """Linear complexity attention calculation"""
         q = q.softmax(dim=-1)
         k = k.softmax(dim=-2)
         context = torch.matmul(k.transpose(-2, -1), v)
@@ -797,16 +795,16 @@ class EnhancedCrossAttentionHFF(nn.Module):
     def forward(self, local_feat, global_feat, context_feat=None):
         B, C1, H, W = local_feat.shape
 
-        # 特征对齐
+        # Feature alignment
         local_aligned = self.local_align(local_feat)
         global_aligned = self.global_align(global_feat)
 
-        # 保存原始特征用于残差连接
+        # Save the original features for residual connection
         local_orig = local_feat
         global_orig = global_feat
 
-        # 计算cross-attention
-        # 扁平化特征
+        # Calculate cross-attention
+        # Flattened features
         local_flat = local_aligned.flatten(2).transpose(1, 2)  # [B, H*W, C]
         global_flat = global_aligned.flatten(2).transpose(1, 2)  # [B, H*W, C]
 
@@ -815,12 +813,12 @@ class EnhancedCrossAttentionHFF(nn.Module):
         k = self.k_proj(local_flat)
         v = self.v_proj(local_flat)
 
-        # 多头注意力
+        # Multi - head Attention
         q = q.view(B, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
         k = k.view(B, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
         v = v.view(B, -1, self.num_heads, self.head_dim).permute(0, 2, 1, 3)
 
-        # 计算注意力
+        # Calculate attention
         if self.use_linear_attn:
             attn_output = self.linear_attention(q, k, v)
         else:
@@ -828,22 +826,22 @@ class EnhancedCrossAttentionHFF(nn.Module):
             attn = attn.softmax(dim=-1)
             attn_output = (attn @ v)
 
-        # 重整形状
+        # Reshape
         cross_attn = attn_output.transpose(1, 2).reshape(B, H * W, -1)
         cross_attn = self.out_proj(cross_attn).transpose(1, 2).reshape(B, -1, H, W)
 
-        # 原始的空间注意力
+        # Original spatial attention
         max_feat, _ = torch.max(local_aligned, dim=1, keepdim=True)
         avg_feat = torch.mean(local_aligned, dim=1, keepdim=True)
         spatial_input = torch.cat([max_feat, avg_feat], dim=1)
         spatial_weight = self.spatial_attn(spatial_input)
         spatial_attn = local_aligned * spatial_weight
 
-        # 原始的通道注意力
+        # Original channel attention
         channel_weight = self.channel_attn(global_aligned)
         channel_attn = global_aligned * channel_weight
 
-        # 动态融合三种注意力
+        # Dynamically fuse three types of attention
         fusion_weights = F.softmax(self.fusion_weights, dim=0)
         fused_attn = (
                 fusion_weights[0] * cross_attn +
@@ -851,28 +849,28 @@ class EnhancedCrossAttentionHFF(nn.Module):
                 fusion_weights[2] * channel_attn
         )
 
-        # 特征增强
+        # Feature enhancement
         enhanced_feat = self.feature_enhancer(fused_attn) + fused_attn
 
-        # 最终融合
+        # Final fusion
         concat_feat = torch.cat([local_orig, global_orig, enhanced_feat], dim=1)
 
-        # 归一化和最终融合
+        # Normalization and final fusion
         concat_feat = self.norm(concat_feat)
         output = self.final_fusion(concat_feat)
 
-        # 如果有上下文特征，先进行通道数适配，然后与之融合
+        # If there are context features, first adapt the number of channels and then fuse them with it
         if context_feat is not None and self.context_transform is not None:
-            # 上采样到当前分辨率
+            # Upsample to the current resolution
             context_feat = F.interpolate(context_feat, size=(H, W))
 
-            # 通道适配
+            # Channel adaptation
             context_feat = self.context_transform(context_feat)
 
-            # 融合
+            # fusion
             output = output + context_feat
 
-        # 残差连接
+        # Residual connection
         output = enhanced_feat + self.drop_path(output)
 
         return output
@@ -1044,83 +1042,10 @@ class MFA_block(nn.Module):
         return z
 
 
+
 class CMFN(nn.Module):
-    def __init__(self, class_num, dataset, arch='resnet50'):
-        super(CMFN, self).__init__()
-
-        self.thermal_module = thermal_module(arch=arch)
-        self.visible_module = visible_module(arch=arch)
-        self.base_resnet = base_resnet(arch=arch)
-
-        self.dataset = dataset
-        if self.dataset == 'regdb':  # For regdb dataset, we remove the MFA3 block and layer4.
-            pool_dim = 1024
-            self.DEE = Multi_FUE(channel=512, dim=128,group_ratio=2,num_heads=16,window_size=2,shift_size=0,mlp_ratio=2)
-            self.MFA1 = MFA_block(256, 64, 0)
-            self.MFA2 = MFA_block(512, 256, 1)
-        else:
-            pool_dim = 2048
-            # self.DEE = FUE_module(1024)
-            self.DEE = Multi_FUE(channel=1024,dim=256,group_ratio=1,num_heads=16,window_size=16,shift_size=0,mlp_ratio=4)
-            self.MFA1 = MFA_block(256, 64, 0)
-            self.MFA2 = MFA_block(512, 256, 1)
-            self.MFA3 = MFA_block(1024, 512, 1)
-
-        self.bottleneck = nn.BatchNorm1d(pool_dim)
-        self.bottleneck.bias.requires_grad_(False)  # no shift
-        self.bottleneck.apply(weights_init_kaiming)
-        self.classifier = nn.Linear(pool_dim, class_num, bias=False)
-        self.classifier.apply(weights_init_classifier)
-
-        self.l2norm = Normalize(2)
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-
-    def forward(self, x1, x2, modal=0):
-        if modal == 0:
-            x1 = self.visible_module(x1)
-            x2 = self.thermal_module(x2)
-            x = torch.cat((x1, x2), 0)
-        elif modal == 1:
-            x = self.visible_module(x1)
-        elif modal == 2:
-            x = self.thermal_module(x2)
-
-        x_ = x
-        x = self.base_resnet.base.layer1(x_)
-        x_ = self.MFA1(x, x_)
-        x = self.base_resnet.base.layer2(x_)
-        x_ = self.MFA2(x, x_)
-        if self.dataset == 'regdb':  # For regdb dataset, we remove the MFA3 block and layer4.
-            x_ = self.DEE(x_)
-            x = self.base_resnet.base.layer3(x_)
-        else:
-            x = self.base_resnet.base.layer3(x_)
-            x_ = self.MFA3(x, x_)
-            x_ = self.DEE(x_)
-            # print(x_.shape)
-            x = self.base_resnet.base.layer4(x_)
-        xp = self.avgpool(x)
-        x_pool = xp.view(xp.size(0), xp.size(1))
-
-        feat = self.bottleneck(x_pool)
-
-        if self.training:
-            xps = xp.view(xp.size(0), xp.size(1), xp.size(2)).permute(0, 2, 1)
-            xp1, xp2, xp3 = torch.chunk(xps, 3, 0)
-            xpss = torch.cat((xp2, xp3), 1)
-            loss_ort = torch.triu(torch.bmm(xpss, xpss.permute(0, 2, 1)), diagonal=1).sum() / (xp.size(0))
-            # print("feat: ", feat.shape)
-            #
-            # print("classifier: ", self.classifier(feat).shape)
-
-            return x_pool, self.classifier(feat), loss_ort
-        else:
-            return self.l2norm(x_pool), self.l2norm(feat)
-
-
-class embed_net_mfacb(nn.Module):
     def __init__(self, class_num, dataset, arch='resnet50', planes=64):
-        super(embed_net_mfacb, self).__init__()
+        super(CMFN, self).__init__()
 
         self.thermal_module = thermal_module(arch=arch)
         self.visible_module = visible_module(arch=arch)
